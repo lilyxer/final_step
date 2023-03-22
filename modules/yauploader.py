@@ -11,21 +11,28 @@ class YaUploader:
                         'Authorization': self._token}
         self._url = 'https://cloud-api.yandex.net/v1/disk/'
 
-    def upload_photos(self, file_dict: dict, folder_name: str) -> str:
+    def upload_photos(self, file_dict: dict, folder_name: str, count: int) -> str:
         """Получает на вход словарь с файлами и ссылками, создаст папку
         либо сверится по дубликатам в этой папке, загрузит фото"""
         folder_name = self._create_folder_path(folder_name)
         folder, files = folder_name
         file_dict = {key: value for key, value in file_dict.items() 
                      if key not in files}
+        tmp_count = 1
         for name, link in file_dict.items():
             params = {'path': f'{folder}/{name}',
                       'url': link,
                       'overwrite': 'false'}
             resp = requests.post(f'{self._url}resources/upload', 
                           headers=self._headers, params=params)
-        return resp.json()
-        
+            if resp.status_code == 202:
+                print(f'Фото {name} было загружено {tmp_count}/{count}')
+                tmp_count += 1
+            if tmp_count == count:
+                break
+        return (f'Загружено {tmp_count}/{count}\n'
+                f'Всего могли загрузить {len(file_dict)}')
+
     def _get_link(self, folder_name: str) -> dict:
         """Вернет имена файлов если папка была создана ранее"""
         params = {'path': folder_name}
@@ -58,7 +65,9 @@ class YaUploader:
 
 
 if __name__ == '__main__':
-    path_to_file = 'image.jpeg'
-    token = input('Token pls ')
+    token = input('Token pls from YaDisk: ')
     uploader = YaUploader(token)
-    print(uploader.upload_image('image.jpeg', path_to_file))
+    my_d = {'image.jpeg': 'https://habrastorage.org/getpro/habr/upload_files/977/76f/c8f/97776fc8f3274b55b16ef9ac4f37af32.png',
+            'dog.png': 'https://habrastorage.org/getpro/habr/upload_files/fc7/069/b86/fc7069b863722ce58b012588cb4d09bb.png'}
+    print(uploader.upload_photos(file_dict=my_d, 
+                                 folder_name='Mikes_photo', count=5))

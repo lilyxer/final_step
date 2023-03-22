@@ -1,64 +1,88 @@
 import requests
-import time
 from datetime import datetime
 
 class VkParser:
-    def __init__(self, token, id):
+    """Производит поиск по альбомам пользователя, если настройки
+    приватности позволяют.
+    Собирает альбомы и фото в максимальном разрешении
+    Возвращает словарь словарей 
+    альбом: {фото: ссылка}"""
+    def __init__(self, token: str, id: int, album_all: int):
         self._token = token
         self._id = id
+        self._album_all = album_all
         self._url = 'https://api.vk.com/method/'
         
-    def _pars_name_and_bdate(self, res):
-        """Смотрим есть ли дата рождения у юзера, если есть - 
-        возвращаем кортеж из имени и даты"""
-        time.sleep(0.1) # иначе банят
-        reg_f = r'%d.%m.%Y'
-        reg_l = r'%d.%m'
-        for i in res.json()['response']:
-            if 'bdate' in i:
-                date = (datetime.strptime(i['bdate'], reg_f) if len(i['bdate']) > 
-                        5 else datetime.strptime(i['bdate'], reg_l))
-                return date.strftime('%d.%b'), i['first_name'], i['last_name']
-
-    def _parametres(self):
-        return  {'access_token': self._token,
-                  'v': 5.131}
+    def _search_albums(self) -> dict:
+        """Вернет словарь известных нам альбомов
+        ключи - id, значения - названия альбомов"""
+        _album_dct = {'profile': 'Фотографии с моей страницы', 
+                      'wall': 'Фотографии на моей стене'}
+        if self._album_all:
+            resp_alb = self._get_albums()
+            if resp_alb:
+                print(resp_alb)
+                for album in resp_alb['response']['items']:
+                    _album_dct.update({album['id']: album['title']})
+        return _album_dct
+    
+    def _get_albums(self) -> dict|None:
+        """Проверяем есть ли открытые альбомы у пользователя"""
+        print('Смотрим альбомы пользователя\n')
+        method = 'photos.getAlbums'
+        params = {'access_token': self._token,
+                  'v': 5.131,
+                  'owner_id': self._id}
+        resp = self._get_request(method=method, params=params)
+        if resp.get('error'):
+            print(f'Альбомы у {self._id} получен ответ')
+            print('Сработали настройки приватности')
+            print(resp['error']['error_msg'], end='\n\n')
+            return
+        return resp
     
     def _get_request(self, method: str, params: dict) -> dict|None:
         """Возвращает словарь с ответом от сервера"""
         resp = requests.get(url=f'{self._url}{method}', params=params)
         if resp.status_code == 200:
-            return resp
-        raise ValueError
+            return resp.json()
+        print('Сработали настройки приватности\n')
     
-    def _get_group_members(self):
-        """Получаем список членов группы"""
-        method = 'groups.getMembers'
-        params = {'group_id': self._id}
-        params.update(self._parametres())
-        return self._get_request(method=method, params=params)
-    
-    def _get_bdate_member(self, user):
-        """Возвращает карточку участника группы"""
-        method = 'users.get'
-        params = {'user_ids': user,
-                  'fields': 'bdate'}
-        params.update(self._parametres())
-        return self._get_request(method=method, params=params)
-        
-    def squeeze_request(self):
-        data = self._get_group_members().json()
-        print('получаем ответ от группы...')
-        print('Бежим по айдишникам...')
-        for users in data['response']['items']:
-            response = self._get_bdate_member(users)
-            r_user = self._pars_name_and_bdate(response)
-            if r_user:
-                print(*r_user)
-
+    def get_our_albums(self) -> dict:
+        """Получаем словари по известным группам
+        Полученные словари передаем на парсинг"""
+        _album_dct = self._search_albums()
+        squeeze = {}
+        method = 'photos.get'
+        params = {'access_token': self._token,
+                  'v': 5.131,
+                  'owner_id': self._id,
+                  'album_id': None,
+                  'extended': 1}
+        for id, album in _album_dct.items():
+            params['album_id'] = id
+            response = self._get_request(method=method, params=params)
+            if response:
+                print(f'Альбом {album} получен ответ')
+                squeeze.update(self._parsing_to_file(album, response))
+        return squeeze
             
-if __name__ == '__main__':
-    input_token =  input('Input token: ')
-    input_id = 'presny_moscow' # input('Input name or id group: ')
-    pars_vk = VkParser(token=input_token, id=input_id)
-    pars_vk.squeeze_request()
+    def _parsing_to_file(self, name: str|int, response: dict) -> dict:
+        """Получаем словари, вытаскиваем из него ссылку на макc разрешение
+        дату загрузки и количество лайков.
+        Возвращаем словарь для дальнейшей выгрузки в файл"""
+        squeeze = {}
+        for photo in response['response']['items']:
+            date = datetime.strftime(datetime.fromtimestamp(photo['date']), 
+                                     '%Y-%m-%d %H_%M')
+            url = photo['sizes'][-1]['url']
+            likes = photo['likes']['count']
+            squeeze[f'{likes}_{date}'] = url
+        print(f'Альбом {name} получено {len(squeeze)} '
+              'фото в максимальном размере\n')
+        return {f'{name}': squeeze}
+            
+    def __str__(self):
+        return (f'привет я - {self.__class__.__name__}\n'
+                f'помогу тебе получить все ссылки на фотографии из альбома'
+                f' пользователя {self._id}')
